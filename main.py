@@ -2,7 +2,7 @@ import base64
 import os
 import uuid
 
-import aiohttp  # 新增：异步HTTP客户端库
+import aiohttp  # 异步HTTP客户端库
 import astrbot.api.message_components as Comp
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -10,7 +10,7 @@ from astrbot.api.message_components import Image
 from astrbot.api.star import Context, Star, register
 
 
-@register("AstrBot_Plugins_Canvas", "长安某", "gemini画图工具", "1.2.0")
+@register("AstrBot_Plugins_Canvas", "长安某", "gemini画图工具", "1.3.0") # 版本号迭代引导
 class GeminiImageGenerator(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         """Gemini 图片生成与编辑插件初始化"""
@@ -107,13 +107,11 @@ class GeminiImageGenerator(Star):
             yield event.plain_result("错误：未配置任何 Gemini API 密钥")
             return
 
-        # 图片提取逻辑
         image_path = await self._extract_image_from_reply(event)
         if not image_path:
             yield event.plain_result("未找到图片，请先长按图片发送回复后重试")
             return
 
-        # 图片编辑处理
         async for result in self._process_image_edit(event, prompt, image_path):
             yield result
 
@@ -135,7 +133,7 @@ class GeminiImageGenerator(Star):
         image_path = await self._extract_image_from_reply(event)
         if not image_path:
             yield event.plain_result(
-                "未找到图片，请先长按图片并点击“回复”，再输入编辑指令"
+                "未找到图片，请先长按图片并点击回复，再输入编辑指令"
             )
             return
 
@@ -152,7 +150,6 @@ class GeminiImageGenerator(Star):
         async for result in self.generate_image(event, prompt):
             yield result
 
-    # 提取回复中图片
     async def _extract_image_from_reply(self, event: AstrMessageEvent):
         """从回复消息中提取图片并返回本地路径"""
         try:
@@ -168,7 +165,6 @@ class GeminiImageGenerator(Star):
                 logger.warning("未检测到回复组件（用户未长按图片回复）")
                 return None
 
-            # 从回复的chain中提取Image组件
             image_component = None
             for quoted_comp in reply_component.chain:
                 if isinstance(quoted_comp, Comp.Image):
@@ -182,7 +178,6 @@ class GeminiImageGenerator(Star):
                 logger.warning("回复中未包含图片组件")
                 return None
 
-            # 获取本地图片路径（自动处理下载/转换）
             image_path = await image_component.convert_to_file_path()
             logger.info(f"图片已处理为本地路径：{image_path}")
             return image_path
@@ -191,7 +186,6 @@ class GeminiImageGenerator(Star):
             logger.error(f"提取图片失败: {str(e)}", exc_info=True)
             return None
 
-    # 统一的图片编辑处理逻辑
     async def _process_image_edit(
         self, event: AstrMessageEvent, prompt: str, image_path: str
     ):
@@ -199,15 +193,12 @@ class GeminiImageGenerator(Star):
         save_path = None
         try:
             yield event.plain_result("正在编辑图片，请稍等...")
-
-            # 调用带重试的编辑方法
             image_data = await self._edit_image_with_retry(prompt, image_path)
 
             if not image_data:
                 yield event.plain_result("编辑失败：所有API密钥均尝试失败")
                 return
 
-            # 保存并发送编辑后的图片
             save_path = os.path.join(self.save_dir, f"{uuid.uuid4()}_edited.png")
             with open(save_path, "wb") as f:
                 f.write(image_data)
@@ -220,7 +211,6 @@ class GeminiImageGenerator(Star):
             yield event.plain_result(f"图片编辑失败：{str(e)}")
 
         finally:
-            # 清理临时文件
             if image_path and os.path.exists(image_path):
                 try:
                     os.remove(image_path)
@@ -238,140 +228,107 @@ class GeminiImageGenerator(Star):
     async def _edit_image_with_retry(self, prompt, image_path):
         """带重试逻辑的图片编辑方法"""
         max_attempts = len(self.api_keys)
-        attempts = 0
-
-        while attempts < max_attempts:
+        for attempt in range(max_attempts):
             current_key = self._get_current_api_key()
             if not current_key:
                 break
-
+            
             logger.info(
-                f"尝试编辑图片（密钥索引：{self.current_key_index}，尝试次数：{attempts + 1}/{max_attempts}）"
+                f"尝试编辑图片（密钥索引：{self.current_key_index}，尝试次数：{attempt + 1}/{max_attempts}）"
             )
-
             try:
                 return await self._edit_image_manually(prompt, image_path, current_key)
             except Exception as e:
-                attempts += 1
-                logger.error(f"第{attempts}次尝试失败：{str(e)}")
-                if attempts < max_attempts:
+                logger.error(f"第{attempt + 1}次尝试失败：{str(e)}")
+                if attempt < max_attempts - 1:
                     self._switch_next_api_key()
                 else:
                     logger.error("所有API密钥均尝试失败")
-
         return None
 
     async def _generate_image_with_retry(self, prompt):
         """带重试逻辑的图片生成方法"""
         max_attempts = len(self.api_keys)
-        attempts = 0
-
-        while attempts < max_attempts:
+        for attempt in range(max_attempts):
             current_key = self._get_current_api_key()
             if not current_key:
                 break
 
             logger.info(
-                f"尝试生成图片（密钥索引：{self.current_key_index}，尝试次数：{attempts + 1}/{max_attempts}）"
+                f"尝试生成图片（密钥索引：{self.current_key_index}，尝试次数：{attempt + 1}/{max_attempts}）"
             )
-
             try:
                 return await self._generate_image_manually(prompt, current_key)
             except Exception as e:
-                attempts += 1
-                logger.error(f"第{attempts}次尝试失败：{str(e)}")
-                if attempts < max_attempts:
+                logger.error(f"第{attempt + 1}次尝试失败：{str(e)}")
+                if attempt < max_attempts - 1:
                     self._switch_next_api_key()
                 else:
                     logger.error("所有API密钥均尝试失败")
-
         return None
 
     async def _edit_image_manually(self, prompt, image_path, api_key):
-        """使用异步请求编辑图片"""
-        model_name = "gemini-2.0-flash-preview-image-generation"
+        """使用异步请求编辑图片（API Key在请求头中）"""
+        model_name = "gemini-1.5-flash"
 
-        # 修正API地址格式
         base_url = self.api_base_url.strip()
         if not base_url.startswith("https://"):
             base_url = f"https://{base_url}"
         if base_url.endswith("/"):
             base_url = base_url[:-1]
 
-        endpoint = (
-            f"{base_url}/v1beta/models/{model_name}:generateContent?key={api_key}"
-        )
+        endpoint = f"{base_url}/v1beta/models/{model_name}:generateContent"
         logger.info(f"异步请求地址：{endpoint}")
 
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": api_key
+        }
 
-        # 读取图片并转换为Base64
         with open(image_path, "rb") as f:
             image_bytes = f.read()
-            image_base64 = (
-                base64.b64encode(image_bytes)
-                .decode("utf-8")
-                .replace("\n", "")
-                .replace("\r", "")
-            )
+            image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 
-        # 构建请求参数
         payload = {
-            "contents": [
-                {"role": "user", "parts": [{"text": prompt}]},
-                {
-                    "role": "user",
-                    "parts": [
-                        {"inlineData": {"mimeType": "image/png", "data": image_base64}}
-                    ],
-                },
-            ],
+            "contents": [{
+                "parts": [
+                    {"text": prompt},
+                    {"inline_data": {"mime_type": "image/png", "data": image_base64}}
+                ]
+            }],
             "generationConfig": {
-                "responseModalities": ["TEXT", "IMAGE"],
-                "temperature": 0.8,
-                "topP": 0.95,
-                "topK": 40,
-                "maxOutputTokens": 1024,
+                "responseMimeType": "image/png",
+                "temperature": 0.4,
+                "topP": 1,
+                "topK": 32,
             },
         }
 
-        # 异步发送请求
         async with aiohttp.ClientSession() as session:
-            try:
-                async with session.post(
-                    url=endpoint, json=payload, headers=headers
-                ) as response:
-                    if response.status != 200:
-                        response_text = await response.text()  # 异步读取响应文本
-                        logger.error(
-                            f"API编辑请求失败: HTTP {response.status}, 响应: {response_text}"
-                        )
-                        response.raise_for_status()
+            async with session.post(url=endpoint, json=payload, headers=headers) as response:
+                if response.status != 200:
+                    response_text = await response.text()
+                    logger.error(f"API编辑请求失败: HTTP {response.status}, 响应: {response_text}")
+                    response.raise_for_status()
+                data = await response.json()
 
-                    # 异步解析JSON响应
-                    data = await response.json()
-            except Exception as e:
-                logger.error(f"异步编辑请求失败: {str(e)}")
-                raise  # 传递异常触发重试
-
-        # 解析图片数据
         image_data = None
-        if "candidates" in data and len(data["candidates"]) > 0:
-            for part in data["candidates"][0]["content"]["parts"]:
-                if "inlineData" in part and "data" in part["inlineData"]:
-                    base64_str = (
-                        part["inlineData"]["data"].replace("\n", "").replace("\r", "")
-                    )
-                    image_data = base64.b64decode(base64_str)
-                    break
-
+        if "candidates" in data and data["candidates"]:
+            candidate = data["candidates"][0]
+            if "content" in candidate and "parts" in candidate["content"]:
+                for part in candidate["content"]["parts"]:
+                    if "blob" in part and "data" in part["blob"]:
+                        base64_str = part["blob"]["data"]
+                        image_data = base64.b64decode(base64_str)
+                        break
+        
         if not image_data:
             raise Exception("编辑图片成功，但未获取到图片数据")
         return image_data
 
     async def _generate_image_manually(self, prompt, api_key):
-        """使用异步请求生成图片（替换同步请求）"""
-        model_name = "gemini-2.0-flash-preview-image-generation"
+        """使用异步请求生成图片（API Key在请求头中）"""
+        model_name = "gemini-1.5-flash"
 
         base_url = self.api_base_url.strip()
         if not base_url.startswith("https://"):
@@ -379,54 +336,42 @@ class GeminiImageGenerator(Star):
         if base_url.endswith("/"):
             base_url = base_url[:-1]
 
-        endpoint = (
-            f"{base_url}/v1beta/models/{model_name}:generateContent?key={api_key}"
-        )
+        endpoint = f"{base_url}/v1beta/models/{model_name}:generateContent"
         logger.info(f"异步请求地址：{endpoint}")
 
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": api_key
+        }
 
         payload = {
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
-                "responseModalities": ["TEXT", "IMAGE"],
+                "responseMimeType": "image/png",
                 "temperature": 0.8,
                 "topP": 0.95,
                 "topK": 40,
-                "maxOutputTokens": 1024,
             },
         }
 
-        # 异步发送请求
         async with aiohttp.ClientSession() as session:
-            try:
-                async with session.post(
-                    url=endpoint, json=payload, headers=headers
-                ) as response:
-                    if response.status != 200:
-                        response_text = await response.text()  # 异步读取响应文本
-                        logger.error(
-                            f"API生成请求失败: HTTP {response.status}, 响应: {response_text}"
-                        )
-                        response.raise_for_status()
+            async with session.post(url=endpoint, json=payload, headers=headers) as response:
+                if response.status != 200:
+                    response_text = await response.text()
+                    logger.error(f"API生成请求失败: HTTP {response.status}, 响应: {response_text}")
+                    response.raise_for_status()
+                data = await response.json()
 
-                    # 异步解析JSON响应
-                    data = await response.json()
-            except Exception as e:
-                logger.error(f"异步生成请求失败: {str(e)}")
-                raise  # 传递异常触发重试
-
-        # 解析图片数据
         image_data = None
-        if "candidates" in data and len(data["candidates"]) > 0:
-            for part in data["candidates"][0]["content"]["parts"]:
-                if "inlineData" in part and "data" in part["inlineData"]:
-                    base64_str = (
-                        part["inlineData"]["data"].replace("\n", "").replace("\r", "")
-                    )
-                    image_data = base64.b64decode(base64_str)
-                    break
-
+        if "candidates" in data and data["candidates"]:
+            candidate = data["candidates"][0]
+            if "content" in candidate and "parts" in candidate["content"]:
+                for part in candidate["content"]["parts"]:
+                    if "blob" in part and "data" in part["blob"]:
+                        base64_str = part["blob"]["data"]
+                        image_data = base64.b64decode(base64_str)
+                        break
+        
         if not image_data:
             raise Exception("生成图片成功，但未获取到图片数据")
         return image_data
@@ -435,9 +380,8 @@ class GeminiImageGenerator(Star):
         """插件卸载时清理临时目录"""
         if os.path.exists(self.save_dir):
             try:
-                for file in os.listdir(self.save_dir):
-                    os.remove(os.path.join(self.save_dir, file))
-                os.rmdir(self.save_dir)
+                import shutil
+                shutil.rmtree(self.save_dir)
                 logger.info(f"插件卸载：已清理临时目录 {self.save_dir}")
             except Exception as e:
                 logger.warning(f"清理临时目录失败: {str(e)}")
